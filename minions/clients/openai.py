@@ -26,6 +26,7 @@ class OpenAIClient(MinionsClient):
         verbosity: Optional[str] = None,
         compact_threshold: Optional[int] = None,
         zdr_enabled: bool = False,
+        tool_search: bool = False,
         **kwargs
     ):
         """
@@ -49,6 +50,9 @@ class OpenAIClient(MinionsClient):
             service_tier: Service tier for request processing - "auto" or "priority" (default: None, which uses standard processing)
             verbosity: Verbosity level for responses API - "low", "medium", or "high" (default: None)
             compact_threshold: Token threshold for server-side compaction (optional, responses API only).
+            tool_search: Enable tool search for the Responses API (default: False).
+                When enabled, the model dynamically loads only the tools it needs,
+                preserving cache and reducing context usage. Tools are marked as deferred.
             local: If this is communicating with a local client (default: False)
             **kwargs: Additional parameters passed to base class
         """
@@ -100,6 +104,7 @@ class OpenAIClient(MinionsClient):
         # Server-side compaction for long-running conversations
         self.compact_threshold = compact_threshold
         self.zdr_enabled = zdr_enabled
+        self.tool_search = tool_search
         # If we are using a local client, we want to check to see if the
         # local server is running or not
         if self.local:
@@ -177,11 +182,20 @@ class OpenAIClient(MinionsClient):
                 if message["role"] == "system":
                     message["role"] = "developer"
 
+            # Build tools list, applying tool search if enabled
+            tools = self.tools
+            if self.tool_search and tools:
+                tools = [
+                    {**t, "defer_loading": True} for t in tools
+                ] + [{"type": "tool_search"}]
+            elif self.tool_search:
+                tools = [{"type": "tool_search"}]
+
             params = {
                 "model": self.model_name,
                 "input": messages,
                 "max_output_tokens": self.max_tokens,
-                "tools": self.tools,
+                "tools": tools,
                 "prompt_cache_key": "minions-v1",
                 "store": self.zdr_enabled,
                 **kwargs,
